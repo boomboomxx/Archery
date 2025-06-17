@@ -150,6 +150,20 @@ class OracleEngine(EngineBase):
             "DIP",
             "OJVMSYS",
             "LBACSYS",
+            "AUDSYS",
+            "DBSFWUSER",
+            "DVF",
+            "DVSYS",
+            "GGSYS",
+            "GSMADMIN_INTERNAL",
+            "GSMCATUSER",
+            "GSMUSER",
+            "REMOTE_SCHEDULER_AGENT",
+            "SYS$UMF",
+            "SYSBACKUP",
+            "SYSDG",
+            "SYSKM",
+            "SYSRAC",
         )
         schema_list = [row[0] for row in result.rows if row[0] not in sysschema]
         result.rows = schema_list
@@ -536,7 +550,7 @@ class OracleEngine(EngineBase):
             else:
                 return False
         elif re.match(r"^delete", sql):
-            table_name = re.match(r"^delete\s+from\s+([\w-]+)\s*", sql, re.M).group(1)
+            table_name = re.match(r"^delete\s(.+?)\s", sql, re.M).group(1)
             if "." not in table_name:
                 table_name = f"{schema_name}.{table_name}"
             table_name = table_name.upper()
@@ -642,16 +656,6 @@ class OracleEngine(EngineBase):
         if result.get("bad_query") or result.get("has_star"):
             result["msg"] = keyword_warning
         return result
-
-    def filter_sql(self, sql="", limit_num=0):
-        sql_lower = sql.lower()
-        # 对查询sql增加limit限制
-        if re.match(r"^select|^with", sql_lower) and not (
-            re.match(r"^select\s+sql_audit.", sql_lower)
-            and sql_lower.find(" sql_audit where rownum <= ") != -1
-        ):
-            sql = f"select sql_audit.* from ({sql.rstrip(';')}) sql_audit where rownum <= {limit_num}"
-        return sql.strip()
 
     def query(
         self,
@@ -1461,7 +1465,7 @@ class OracleEngine(EngineBase):
             self.close()
         return result
 
-    def session_list(self, command_type):
+    def processlist(self, command_type, **kwargs):
         """获取会话信息"""
         base_sql = """select 
                        s.sid,

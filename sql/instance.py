@@ -14,6 +14,7 @@ from common.utils.extend_json_encoder import ExtendJSONEncoder
 from common.utils.convert import Convert
 from sql.engines import get_engine
 from sql.plugins.schemasync import SchemaSync
+from sql.utils.sql_utils import filter_db_list
 from .models import Instance, ParamTemplate, ParamHistory
 
 
@@ -237,14 +238,18 @@ def schemasync(request):
     tag = int(time.time())
     output_directory = os.path.join(settings.BASE_DIR, "downloads/schemasync/")
     os.makedirs(output_directory, exist_ok=True)
+
+    username, password = instance.get_username_password()
+    target_username, target_password = target_instance.get_username_password()
+
     args = {
         "sync-auto-inc": sync_auto_inc,
         "sync-comments": sync_comments,
         "charset": "utf8mb4",
         "tag": tag,
         "output-directory": output_directory,
-        "source": f"mysql://{instance.user}:{instance.password}@{instance.host}:{instance.port}/{db_name}",
-        "target": f"mysql://{target_instance.user}:{target_instance.password}@{target_instance.host}:{target_instance.port}/{target_db_name}",
+        "source": f"mysql://{username}:{password}@{instance.host}:{instance.port}/{db_name}",
+        "target": f"mysql://{target_username}:{target_password}@{target_instance.host}:{target_instance.port}/{target_db_name}",
     }
     # 参数检查
     args_check_result = schema_sync.check_args(args)
@@ -332,6 +337,16 @@ def instance_resource(request):
         tb_name = query_engine.escape_string(tb_name)
         if resource_type == "database":
             resource = query_engine.get_all_databases()
+            resource.rows = filter_db_list(
+                db_list=resource.rows,
+                db_name_regex=query_engine.instance.show_db_name_regex,
+                is_match_regex=True,
+            )
+            resource.rows = filter_db_list(
+                db_list=resource.rows,
+                db_name_regex=query_engine.instance.denied_db_name_regex,
+                is_match_regex=False,
+            )
         elif resource_type == "schema" and db_name:
             resource = query_engine.get_all_schemas(db_name=db_name)
         elif resource_type == "table" and db_name:

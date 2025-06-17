@@ -53,6 +53,8 @@ env = environ.Env(
             "odps",
             "cassandra",
             "doris",
+            "elasticsearch",
+            "opensearch",
         ],
     ),
     ENABLED_NOTIFIERS=(
@@ -69,6 +71,7 @@ env = environ.Env(
         ],
     ),
     CURRENT_AUDITOR=(str, "sql.utils.workflow_audit:AuditV2"),
+    PASSWORD_MIXIN_PATH=(str, "sql.plugins.password:DummyMixin"),
 )
 
 # SECURITY WARNING: keep the secret key used in production secret!
@@ -101,6 +104,8 @@ AVAILABLE_ENGINES = {
     "phoenix": {"path": "sql.engines.phoenix:PhoenixEngine"},
     "odps": {"path": "sql.engines.odps:ODPSEngine"},
     "doris": {"path": "sql.engines.doris:DorisEngine"},
+    "elasticsearch": {"path": "sql.engines.elasticsearch:ElasticsearchEngine"},
+    "opensearch": {"path": "sql.engines.elasticsearch:OpenSearchEngine"},
 }
 
 ENABLED_NOTIFIERS = env("ENABLED_NOTIFIERS")
@@ -108,6 +113,8 @@ ENABLED_NOTIFIERS = env("ENABLED_NOTIFIERS")
 ENABLED_ENGINES = env("ENABLED_ENGINES")
 
 CURRENT_AUDITOR = env("CURRENT_AUDITOR")
+
+PASSWORD_MIXIN_PATH = env("PASSWORD_MIXIN_PATH")
 
 # Application definition
 INSTALLED_APPS = (

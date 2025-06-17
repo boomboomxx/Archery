@@ -1,13 +1,32 @@
 # -*- coding: UTF-8 -*-
+import importlib
+import logging
 from typing import Optional
 
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from mirage import fields
 from django.utils.translation import gettext as _
+from django.conf import settings
 from mirage.crypto import Crypto
 
 from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction
+
+
+logger = logging.getLogger("default")
+file, _class = settings.PASSWORD_MIXIN_PATH.split(":")
+
+try:
+    password_module = importlib.import_module(file)
+    PasswordMixin = getattr(password_module, _class)
+except (ImportError, AttributeError) as e:
+    logger.error(
+        f"failed to import password minxin {settings.PASSWORD_MIXIN_PATH}, {str(e)}"
+    )
+    logger.error(f"falling back to dummy mixin")
+    from sql.plugins.password import DummyMixin
+
+    PasswordMixin = DummyMixin
 
 
 class ResourceGroup(models.Model):
@@ -134,6 +153,8 @@ DB_TYPE_CHOICES = (
     ("goinception", "goInception"),
     ("cassandra", "Cassandra"),
     ("doris", "Doris"),
+    ("elasticsearch", "Elasticsearch"),
+    ("opensearch", "OpenSearch"),
 )
 
 
@@ -177,7 +198,7 @@ class Tunnel(models.Model):
         verbose_name_plural = "隧道配置"
 
 
-class Instance(models.Model):
+class Instance(models.Model, PasswordMixin):
     """
     各个线上实例配置
     """
@@ -203,7 +224,23 @@ class Instance(models.Model):
         verbose_name="密码", max_length=300, default="", blank=True
     )
     is_ssl = models.BooleanField("是否启用SSL", default=False)
+    verify_ssl = models.BooleanField("是否验证服务端SSL证书", default=True)
     db_name = models.CharField("数据库", max_length=64, default="", blank=True)
+    show_db_name_regex = models.CharField(
+        "显示的数据库列表正则",
+        max_length=1024,
+        default="",
+        blank=True,
+        help_text="正则表达式。示例：^(test_db|dmp_db|za.*)$。Redis示例: ^(0|4|6|11|12|13)$",
+    )
+    denied_db_name_regex = models.CharField(
+        "隐藏的数据库列表正则",
+        max_length=1024,
+        default="",
+        blank=True,
+        help_text="正则表达式。隐藏大于显示，此规则优先。",
+    )
+
     charset = models.CharField("字符集", max_length=20, default="", blank=True)
     service_name = models.CharField(
         "Oracle service name", max_length=50, null=True, blank=True

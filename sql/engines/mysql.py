@@ -762,7 +762,7 @@ class MysqlEngine(EngineBase):
         """
         return self.inc_engine.osc_control(**kwargs)
 
-    def processlist(self, command_type):
+    def processlist(self, command_type, **kwargs):
         """获取连接信息"""
         base_sql = "select id, user, host, db, command, time, state, ifnull(info,'') as info from information_schema.processlist"
         # escape
@@ -916,7 +916,7 @@ class MysqlEngine(EngineBase):
         TO_SECONDS(NOW()) - TO_SECONDS(trx.trx_started) trx_idle_time,
         p.time thread_time,
         IFNULL((SELECT
-        GROUP_CONCAT(t1.sql_text SEPARATOR ';
+        GROUP_CONCAT(t1.sql_text order by t1.TIMER_START desc SEPARATOR ';
         ')
         FROM performance_schema.events_statements_history t1
         INNER JOIN performance_schema.threads t2
