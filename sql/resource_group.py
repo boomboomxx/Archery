@@ -7,12 +7,14 @@ import simplejson as json
 from django.contrib.auth.models import Group
 from django.db.models import F, Value, IntegerField
 from django.http import HttpResponse
+
+from common.utils.ding_api import get_process_code_name
 from common.utils.extend_json_encoder import ExtendJSONEncoder
 from common.utils.permission import superuser_required
 from common.utils.convert import Convert
 from sql.models import ResourceGroup, Users, Instance
 from sql.utils.resource_group import user_instances
-from sql.utils.workflow_audit import Audit
+from sql.utils.workflow_audit import Audit, AuditV2
 
 logger = logging.getLogger("default")
 
@@ -201,20 +203,28 @@ def auditors(request):
     result = {
         "status": 0,
         "msg": "ok",
-        "data": {"auditors": "", "auditors_display": ""},
+        "data": {"auditors": "", "auditors_display": "", "channel": 0, "channel_process_code": ""},
     }
     if group_name:
         group_id = ResourceGroup.objects.get(group_name=group_name).group_id
         audit_auth_groups = Audit.settings(
             group_id=group_id, workflow_type=workflow_type
         )
+        channel, channel_process_code = Audit.channel_settings(group_id, workflow_type)
     else:
         result["status"] = 1
         result["msg"] = "参数错误"
         return HttpResponse(json.dumps(result), content_type="application/json")
 
+    if channel:
+        result["data"]["channel"] = channel
+    if channel_process_code:
+        result["data"]["channel_process_code"] = channel_process_code
+        result["data"]["channel_process_code_display"] = get_process_code_name(channel_process_code,request.user.username)
+
+
     # 获取权限组名称
-    if audit_auth_groups:
+    if result["data"]["channel"] == 0 and audit_auth_groups:
         # 校验配置
         for auth_group_id in audit_auth_groups.split(","):
             try:
@@ -251,6 +261,28 @@ def changeauditors(request):
     ]
     try:
         Audit.change_settings(group_id, workflow_type, ",".join(audit_auth_groups))
+    except Exception as msg:
+        logger.error(traceback.format_exc())
+        result["msg"] = str(msg)
+        result["status"] = 1
+
+    # 返回结果
+    return HttpResponse(json.dumps(result), content_type="application/json")
+
+
+@superuser_required
+def change_channel_auditors(request):
+    """设置资源组的审批流程 - 渠道配置版 """
+    group_name = request.POST.get("group_name")
+    workflow_type = request.POST.get("workflow_type")
+    channel = request.POST.get("channel")
+    process_code = request.POST.get("channel_process_code", '')
+    result = {"status": 0, "msg": "ok", "data": []}
+
+    # 调用工作流修改审核配置
+    group_id = ResourceGroup.objects.get(group_name=group_name).group_id
+    try:
+        Audit.change_channel_settings(group_id, workflow_type, channel, process_code)
     except Exception as msg:
         logger.error(traceback.format_exc())
         result["msg"] = str(msg)

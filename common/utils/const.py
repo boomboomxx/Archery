@@ -16,6 +16,11 @@ class WorkflowType(models.IntegerChoices):
     ARCHIVE = 3, "数据归档申请"
 
 
+class WorkflowChannelType(models.IntegerChoices):
+    DEFAULT = 1, "本地工作流"
+    DING_TALK = 2, "钉钉工作流"
+
+
 class WorkflowStatus(models.IntegerChoices):
     WAITING = 0, "待审核"
     PASSED = 1, "审核通过"

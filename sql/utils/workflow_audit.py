@@ -12,9 +12,11 @@ from django.contrib.auth.models import Group
 from django.utils import timezone
 from django.conf import settings
 
+from archery.settings import env
+from common.utils.ding_api import create_process
 from sql.engines.models import ReviewResult
 from sql.utils.resource_group import user_groups, auth_group_users
-from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction
+from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction, WorkflowChannelType
 from sql.models import (
     WorkflowAudit,
     WorkflowAuditDetail,
@@ -98,6 +100,8 @@ class AuditSetting:
     """
 
     audit_auth_groups: List = field(default_factory=list)
+    channel: WorkflowChannelType = WorkflowChannelType.DEFAULT
+    channel_process_instance_id: str = None
     auto_pass: bool = False
     auto_reject: bool = False
 
@@ -105,7 +109,12 @@ class AuditSetting:
     def audit_auth_group_in_db(self):
         if self.auto_reject or self.auto_pass:
             return ""
-        return ",".join(str(x) for x in self.audit_auth_groups)
+        if self.channel == WorkflowChannelType.DEFAULT:
+            return ",".join(str(x) for x in self.audit_auth_groups)
+        elif self.channel == WorkflowChannelType.DING_TALK:
+            return self.channel_process_instance_id
+        else:
+            raise AuditException("错误的审批渠道配置")
 
 
 # 列出审核工单中不同状态的合法操作
@@ -212,10 +221,10 @@ class AuditV2:
             if err_level == 2:
                 error_count += 1
         if any(
-            [
-                warning_count > 0 and auto_review_wrong == "1",
-                error_count > 0 and auto_review_wrong in ("", "1", "2"),
-            ]
+                [
+                    warning_count > 0 and auto_review_wrong == "1",
+                    error_count > 0 and auto_review_wrong in ("", "1", "2"),
+                ]
         ):
             return True
         return False
@@ -235,7 +244,7 @@ class AuditV2:
         if self.workflow.instance.db_type not in auto_review_db_type:
             return False
         if not self.workflow.instance.instance_tag.filter(
-            tag_code__in=auto_review_tags
+                tag_code__in=auto_review_tags
         ).exists():
             return False
 
@@ -260,7 +269,7 @@ class AuditV2:
             # 影响行数加测, 总语句影响行数超过指定数量则需要人工审核
             all_affected_rows += int(review_result.affected_rows)
         if all_affected_rows > int(
-            self.sys_config.get("auto_review_max_update_rows", 50)
+                self.sys_config.get("auto_review_max_update_rows", 50)
         ):
             # 影响行数超规模, 需要人工审核
             return False
@@ -413,7 +422,7 @@ class AuditV2:
                 return True
             # 看是否本人审核
             if actor.username == self.audit.create_user and self.sys_config.get(
-                "ban_self_audit"
+                    "ban_self_audit"
             ):
                 raise AuditException("当前配置禁止本人审核自己的工单")
             # 确认用户权限
@@ -441,7 +450,7 @@ class AuditV2:
         raise AuditException(f"不支持的操作, 无法判断权限")
 
     def operate(
-        self, action: WorkflowAction, actor: Users, remark: str
+            self, action: WorkflowAction, actor: Users, remark: str
     ) -> WorkflowAuditDetail:
         """操作已提交的工单"""
         if not self.audit:
@@ -685,6 +694,17 @@ class Audit(object):
         except Exception:
             return None
 
+    # 通过组和审核类型，获取渠道审核配置信息
+    @staticmethod
+    def channel_settings(group_id, workflow_type):
+        try:
+            wfs = WorkflowAuditSetting.objects.get(
+                workflow_type=workflow_type, group_id=group_id
+            )
+            return wfs.channel, wfs.channel_process_code
+        except Exception:
+            return 1, ''
+
     # 修改\添加配置信息
     @staticmethod
     def change_settings(group_id, workflow_type, audit_auth_groups):
@@ -694,13 +714,32 @@ class Audit(object):
             )
             WorkflowAuditSetting.objects.filter(
                 workflow_type=workflow_type, group_id=group_id
-            ).update(audit_auth_groups=audit_auth_groups)
+            ).update(channel=WorkflowChannelType.DEFAULT, audit_auth_groups=audit_auth_groups)
         except Exception:
             inset = WorkflowAuditSetting()
             inset.group_id = group_id
             inset.group_name = ResourceGroup.objects.get(group_id=group_id).group_name
             inset.audit_auth_groups = audit_auth_groups
             inset.workflow_type = workflow_type
+            inset.save()
+
+    # 修改\添加 渠道配置信息
+    @staticmethod
+    def change_channel_settings(group_id, workflow_type, channel, channel_process_code):
+        try:
+            WorkflowAuditSetting.objects.get(
+                workflow_type=workflow_type, group_id=group_id
+            )
+            WorkflowAuditSetting.objects.filter(
+                workflow_type=workflow_type, group_id=group_id
+            ).update(channel=channel, channel_process_code=channel_process_code)
+        except Exception:
+            inset = WorkflowAuditSetting()
+            inset.group_id = group_id
+            inset.group_name = ResourceGroup.objects.get(group_id=group_id).group_name
+            inset.workflow_type = workflow_type
+            inset.channel = channel
+            inset.channel_process_code = channel_process_code
             inset.save()
 
     # 判断用户当前是否是可审核
@@ -727,9 +766,9 @@ class Audit(object):
 
         applicant = get_workflow_applicant(workflow_id, workflow_type)
         if (
-            user.username == applicant
-            and not user.is_superuser
-            and SysConfig().get("ban_self_audit")
+                user.username == applicant
+                and not user.is_superuser
+                and SysConfig().get("ban_self_audit")
         ):
             return result
         # 只有待审核状态数据才可以审核
@@ -742,10 +781,10 @@ class Audit(object):
             except Exception:
                 raise Exception("当前审批auth_group_id不存在，请检查并清洗历史数据")
             if (
-                user.is_superuser
-                or auth_group_users([audit_auth_group], group_id)
-                .filter(id=user.id)
-                .exists()
+                    user.is_superuser
+                    or auth_group_users([audit_auth_group], group_id)
+                    .filter(id=user.id)
+                    .exists()
             ):
                 if workflow_type == 1:
                     if user.has_perm("sql.query_review"):
@@ -761,12 +800,12 @@ class Audit(object):
     # 新增工单日志
     @staticmethod
     def add_log(
-        audit_id,
-        operation_type,
-        operation_type_desc,
-        operation_info,
-        operator,
-        operator_display,
+            audit_id,
+            operation_type,
+            operation_type_desc,
+            operation_info,
+            operator,
+            operator_display,
     ):
         log = WorkflowLog(
             audit_id=audit_id,
@@ -785,15 +824,132 @@ class Audit(object):
         return WorkflowLog.objects.filter(audit_id=audit_id)
 
 
+class DingTalkAudit(AuditV2):
+
+    def review_info(self) -> (str, str):
+        if self.audit.audit_auth_groups == "":
+            audit_auth_group = "无需审批"
+        else:
+            # todo 查找钉钉审批流信息
+            audit_auth_group = "钉钉审批"
+        return audit_auth_group, None
+
+    def operate(
+            self, action: WorkflowAction, actor: Users, remark: str
+    ) -> WorkflowAuditDetail:
+        raise AuditException("当前类型不支持该操作, 请至钉钉进行审批")
+
+    def create_audit(self) -> str:
+        """按照传进来的工作流创建审批流, 返回一个 message如果有任何错误, 会以 exception 的形式抛出, 其他情况都是正常进行"""
+        # 检查是否已存在待审核数据
+        workflow_info = self.get_audit_info()
+        if workflow_info:
+            raise AuditException("该工单当前状态为待审核，请勿重复提交")
+        # 获取审批流程
+        audit_setting = self.generate_audit_setting()
+
+        if self.workflow_type == WorkflowType.QUERY:
+            workflow_title = self.workflow.title
+            group_id = self.workflow.group_id
+            group_name = self.workflow.group_name
+            create_user = self.workflow.user_name
+            create_user_display = self.workflow.user_display
+        elif self.workflow_type == WorkflowType.SQL_REVIEW:
+            workflow_title = self.workflow.workflow_name
+            group_id = self.workflow.group_id
+            group_name = self.workflow.group_name
+            create_user = self.workflow.engineer
+            create_user_display = self.workflow.engineer_display
+        elif self.workflow_type == WorkflowType.ARCHIVE:
+            workflow_title = self.workflow.title
+            group_id = self.resource_group_id
+            group_name = self.resource_group
+            create_user = self.workflow.user_name
+            create_user_display = self.workflow.user_display
+        else:
+            raise AuditException(f"不支持的审核类型: {self.workflow_type.label}")
+        # 单独配置审批流程组, 三种类型都使用到了该字段, 且为一致数据
+        # 这里直接使用 audit_setting 中适配的资源
+        self.workflow.channel_audit_instance_id=audit_setting.audit_auth_group_in_db
+        self.workflow.save()
+        self.audit = WorkflowAudit(
+            group_id=group_id,
+            group_name=group_name,
+            workflow_id=self.workflow.pk,
+            workflow_type=self.workflow_type,
+            workflow_title=workflow_title,
+            audit_auth_groups=audit_setting.audit_auth_group_in_db,
+            current_audit="-1",
+            next_audit="-1",
+            create_user=create_user,
+            create_user_display=create_user_display,
+        )
+        # 自动通过的情况
+        if audit_setting.auto_pass:
+            self.audit.current_status = WorkflowStatus.PASSED
+            self.audit.save()
+            WorkflowLog.objects.create(
+                audit_id=self.audit.audit_id,
+                operation_type=WorkflowAction.SUBMIT,
+                operation_type_desc=WorkflowAction.SUBMIT.label,
+                operation_info="无需审批，系统直接审核通过",
+                operator=self.audit.create_user,
+                operator_display=self.audit.create_user_display,
+            )
+
+            return "无需审批, 直接审核通过"
+
+        # 向审核主表插入待审核数据
+        self.audit.current_audit = audit_setting.audit_auth_group_in_db
+        self.audit.next_audit = "-1"
+        self.audit.current_status = WorkflowStatus.WAITING
+        self.audit.create_user = create_user
+        self.audit.create_user_display = create_user_display
+        self.audit.save()
+        readable_review_flow, _ = self.review_info
+        audit_log = WorkflowLog(
+            audit_id=self.audit.audit_id,
+            operation_type=WorkflowAction.SUBMIT,
+            operation_type_desc=WorkflowAction.SUBMIT.label,
+            operation_info="等待审批，审批流程：{}".format(readable_review_flow),
+            operator=self.audit.create_user,
+            operator_display=self.audit.create_user_display,
+        )
+        audit_log.save()
+        return "工单已正常提交"
+
+    def generate_audit_setting(self) -> AuditSetting:
+        if self.workflow_type in [WorkflowType.SQL_REVIEW, WorkflowType.QUERY]:
+            group_id = self.workflow.group_id
+        else:
+            # ArchiveConfig
+            group_id = self.resource_group_id
+        try:
+            workflow_audit_setting = WorkflowAuditSetting.objects.get(
+                workflow_type=self.workflow_type, group_id=group_id
+            )
+        except WorkflowAuditSetting.DoesNotExist:
+            raise AuditException(f"审批类型 {self.workflow_type.label} 未配置审流")
+        # 创建审批流
+        process_instance_id = create_process(workflow_audit_setting.channel_process_code, self.workflow)
+
+        return AuditSetting(
+            auto_pass=self.is_auto_review(),
+            auto_reject=self.is_auto_reject(),
+            channel=WorkflowChannelType.DING_TALK,
+            channel_process_instance_id=process_instance_id,
+        )
+
+
 def get_auditor(
-    # workflow 对象有可能是还没有在数据库中创建的对象, 这里需要注意
-    workflow: Union[SqlWorkflow, ArchiveConfig, QueryPrivilegesApply] = None,
-    sys_config: SysConfig = None,
-    audit: WorkflowAudit = None,
-    workflow_type: WorkflowType = WorkflowType.SQL_REVIEW,
-    # 归档表中没有下面两个参数, 所以对归档表来说一下两参数必传
-    resource_group: str = "",
-    resource_group_id: int = 0,
+        # workflow 对象有可能是还没有在数据库中创建的对象, 这里需要注意
+        workflow: Union[SqlWorkflow, ArchiveConfig, QueryPrivilegesApply] = None,
+        sys_config: SysConfig = None,
+        audit: WorkflowAudit = None,
+        workflow_type: WorkflowType = WorkflowType.SQL_REVIEW,
+        # 归档表中没有下面两个参数, 所以对归档表来说一下两参数必传
+        resource_group: str = "",
+        resource_group_id: int = 0,
 ) -> AuditV2:
     current_auditor = settings.CURRENT_AUDITOR
     module, o = current_auditor.split(":")

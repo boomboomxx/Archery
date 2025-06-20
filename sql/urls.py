@@ -101,6 +101,7 @@ urlpatterns = [
     path("group/unassociated/", resource_group.unassociated_objects),
     path("group/auditors/", resource_group.auditors),
     path("group/changeauditors/", resource_group.changeauditors),
+    path("group/change_channel_auditors/", resource_group.change_channel_auditors),
     path("group/user_all_instances/", resource_group.user_all_instances),
     path("instance/list/", instance.lists),
     path("instance/user/list", instance_account.users),

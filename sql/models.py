@@ -10,8 +10,7 @@ from django.utils.translation import gettext as _
 from django.conf import settings
 from mirage.crypto import Crypto
 
-from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction
-
+from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction, WorkflowChannelType
 
 logger = logging.getLogger("default")
 file, _class = settings.PASSWORD_MIXIN_PATH.split(":")
@@ -342,7 +341,8 @@ class SqlWorkflow(models.Model, WorkflowAuditMixin):
     engineer = models.CharField("发起人", max_length=30)
     engineer_display = models.CharField("发起人中文名", max_length=50, default="")
     status = models.CharField(max_length=50, choices=SQL_WORKFLOW_CHOICES)
-    audit_auth_groups = models.CharField("审批权限组列表", max_length=255)
+    audit_auth_groups = models.CharField("审批权限组列表", max_length=255, null=True, blank=True)
+    channel_audit_instance_id = models.CharField("渠道审批流 ID", max_length=255, null=True, blank=True)
     run_date_start = models.DateTimeField("可执行起始时间", null=True, blank=True)
     run_date_end = models.DateTimeField("可执行结束时间", null=True, blank=True)
     create_time = models.DateTimeField("创建时间", auto_now_add=True)
@@ -460,6 +460,8 @@ class WorkflowAuditSetting(models.Model):
     group_id = models.IntegerField("组ID")
     group_name = models.CharField("组名称", max_length=100)
     workflow_type = models.IntegerField("审批类型", choices=WorkflowType.choices)
+    channel = models.IntegerField("审批渠道", choices=WorkflowChannelType.choices, default=WorkflowChannelType.DEFAULT)
+    channel_process_code = models.CharField("审批渠道 审批流 code", max_length=255, null=True)
     audit_auth_groups = models.CharField("审批权限组列表", max_length=255)
     create_time = models.DateTimeField(auto_now_add=True)
     sys_time = models.DateTimeField(auto_now=True)

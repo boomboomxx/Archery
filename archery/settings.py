@@ -1,28 +1,28 @@
 # -*- coding: UTF-8 -*-
 
 
+import logging
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 import os
-from typing import List
 from datetime import timedelta
+from typing import List
+
 import environ
 import requests
-import logging
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
+APP_VERSION = "1.13.0"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, ["*"]),
     SECRET_KEY=(str, "hfusaf2m4ot#7)fkw#di2bu6(cv0@opwmafx5n#6=3d%x^hpl6"),
     DATABASE_URL=(str, "mysql://root:@127.0.0.1:3306/archery"),
-    CACHE_URL=(str, "redis://127.0.0.1:6379/0"),
+    CACHE_URL=(str, "redis://127.0.0.1:6379/0?key_prefix=archery&version=3"),
     # 系统外部认证目前支持LDAP、OIDC、DINGDING三种，认证方式只能启用其中一种，如果启用多个，实际生效的只有一个，优先级LDAP > DINGDING > OIDC
     ENABLE_LDAP=(bool, False),
     ENABLE_OIDC=(bool, False),
@@ -347,7 +347,7 @@ if ENABLE_DINGDING:
 ENABLE_LDAP = env("ENABLE_LDAP", False)
 if ENABLE_LDAP:
     import ldap
-    from django_auth_ldap.config import LDAPSearch
+    from django_auth_ldap.config import LDAPSearch, GroupOfNamesType
 
     AUTHENTICATION_BACKENDS = (
         "django_auth_ldap.backend.LDAPBackend",  # 配置为先使用LDAP认证，如通过认证则不再使用后面的认证方式
@@ -375,6 +375,19 @@ if ENABLE_LDAP:
         "AUTH_LDAP_ALWAYS_UPDATE_USER", default=True
     )  # 每次登录从ldap同步用户信息
     AUTH_LDAP_USER_ATTR_MAP = env("AUTH_LDAP_USER_ATTR_MAP")
+    # Set up the basic group parameters.
+    AUTH_LDAP_GROUP_SEARCH = LDAPSearch(
+        'ou=dbm,ou=groups,dc=sziscloud,dc=com',
+        ldap.SCOPE_SUBTREE,
+        '(objectClass=groupOfNames)',
+    )
+    AUTH_LDAP_GROUP_TYPE = GroupOfNamesType(name_attr='cn')
+    AUTH_LDAP_FIND_GROUP_PERMS = True
+    AUTH_LDAP_USER_FLAGS_BY_GROUP = {
+        'is_active': 'cn=Developer,ou=dbm,ou=groups,dc=sziscloud,dc=com',
+        'is_staff': 'cn=DevOPS,ou=dbm,ou=groups,dc=sziscloud,dc=com',
+        'is_superuser': 'cn=Director,ou=dbm,ou=groups,dc=sziscloud,dc=com',
+    }
 
 # CAS认证
 ENABLE_CAS = env("ENABLE_CAS", default=False)
@@ -503,6 +516,10 @@ if not os.path.exists(MEDIA_ROOT):
 PKEY_ROOT = os.path.join(MEDIA_ROOT, "keys")
 if not os.path.exists(PKEY_ROOT):
     os.mkdir(PKEY_ROOT)
+
+if CURRENT_AUDITOR == 'sql.utils.workflow_audit:DingTalkAudit':
+    AUTH_DINGDING_APP_KEY = env("AUTH_DINGDING_APP_KEY")
+    AUTH_DINGDING_APP_SECRET = env("AUTH_DINGDING_APP_SECRET")
 
 try:
     from local_settings import *

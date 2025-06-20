@@ -96,8 +96,10 @@
                                 </div>
                             </div>
                             <!--审批流程-->
+                            <input type="hidden" id="">
                             <input type="hidden" id="workflow_auditors" name="workflow_auditors" data-name="审批流程"
                                    data-placeholder="请配置审批流程！" required>
+
                             <div id="div-workflow_auditors" class="form-group" style="display: none">
                                 <p class="bg-primary">&nbsp&nbsp&nbsp审批流程：<b id="workflow_auditors_display"></b></p>
                             </div>
@@ -683,9 +685,17 @@
                 success: function (data) {
                     if (data.status === 0) {
                         var result = data.data;
-                        $("#workflow_auditors").val(result['auditors']);
-                        $("#workflow_auditors_display").text(result['auditors_display']);
-                        $("#div-workflow_auditors").show();
+                        channel = result['channel']
+                        if (channel == 0){
+                            $("#workflow_auditors").val(result['auditors']);
+                            $("#workflow_auditors_display").text(result['auditors_display']);
+                            $("#div-workflow_auditors").show();
+                        }else if (channel == 1) {
+                            $("#workflow_auditors").attr('required', false)
+                            $("#workflow_auditors_display").text('钉钉审批: ' + result['channel_process_code_display']);
+                            $("#div-workflow_auditors").show();
+                        }
+
                     } else {
                         alert(data.msg);
                     }
