@@ -3,11 +3,11 @@ import importlib
 import logging
 from typing import Optional
 
-from django.db import models
-from django.contrib.auth.models import AbstractUser
-from mirage import fields
-from django.utils.translation import gettext as _
 from django.conf import settings
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+from django.utils.translation import gettext as _
+from mirage import fields
 from mirage.crypto import Crypto
 
 from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction, WorkflowChannelType
@@ -39,6 +39,7 @@ class ResourceGroup(models.Model):
     group_sort = models.IntegerField("排序", default=1)
     group_level = models.IntegerField("层级", default=1)
     ding_webhook = models.CharField("钉钉webhook地址", max_length=255, blank=True)
+    ding_webhook_sec = models.CharField("钉钉webhook sec 加签", max_length=255, blank=True)
     feishu_webhook = models.CharField("飞书webhook地址", max_length=255, blank=True)
     qywx_webhook = models.CharField("企业微信webhook地址", max_length=255, blank=True)
     is_deleted = models.IntegerField(
@@ -397,7 +398,7 @@ class WorkflowAudit(models.Model):
         "申请备注", default="", max_length=140, blank=True
     )
     audit_auth_groups = models.CharField("审批权限组列表", max_length=255)
-    current_audit = models.CharField("当前审批权限组", max_length=20)
+    current_audit = models.CharField("当前审批权限组", max_length=55)
     next_audit = models.CharField("下级审批权限组", max_length=20)
     current_status = models.IntegerField("审核状态", choices=WorkflowStatus.choices)
     create_user = models.CharField("申请人", max_length=30)
@@ -520,6 +521,7 @@ class QueryPrivilegesApply(models.Model, WorkflowAuditMixin):
     db_list = models.TextField("数据库", default="")  # 逗号分隔的数据库列表
     table_list = models.TextField("表", default="")  # 逗号分隔的表列表
     valid_date = models.DateField("有效时间")
+    channel_audit_instance_id = models.CharField("渠道审批流 ID", max_length=255, null=True, blank=True)
     limit_num = models.IntegerField("行数限制", default=100)
     priv_type = models.IntegerField(
         "权限类型",
@@ -826,6 +828,7 @@ class ArchiveConfig(models.Model, WorkflowAuditMixin):
         "审核状态", choices=WorkflowStatus.choices, blank=True, default=1
     )
     state = models.BooleanField("是否启用归档", default=True)
+    channel_audit_instance_id = models.CharField("渠道审批流 ID", max_length=255, null=True, blank=True)
     user_name = models.CharField("申请人", max_length=30, blank=True, default="")
     user_display = models.CharField(
         "申请人中文名", max_length=50, blank=True, default=""

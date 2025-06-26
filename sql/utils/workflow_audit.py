@@ -1,22 +1,20 @@
 # -*- coding: UTF-8 -*-
-import dataclasses
 import importlib
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Union, Optional, List
-import logging
 
+from django.conf import settings
 from django.contrib.auth.models import Group
 from django.utils import timezone
-from django.conf import settings
 
-from archery.settings import env
-from common.utils.ding_api import create_process
-from sql.engines.models import ReviewResult
-from sql.utils.resource_group import user_groups, auth_group_users
+from common.config import SysConfig
 from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction, WorkflowChannelType
+from common.utils.ding_api import create_process, close_process_instance
+from sql.engines.models import ReviewResult
 from sql.models import (
     WorkflowAudit,
     WorkflowAuditDetail,
@@ -28,7 +26,7 @@ from sql.models import (
     Users,
     ArchiveConfig,
 )
-from common.config import SysConfig
+from sql.utils.resource_group import user_groups, auth_group_users
 from sql.utils.sql_utils import remove_comments
 
 logger = logging.getLogger("default")
@@ -40,6 +38,7 @@ class AuditException(Exception):
 
 class ReviewNodeType(Enum):
     GROUP = "group"
+    DING_TALK = "ding_talk"
     AUTO_PASS = "auto_pass"
 
 
@@ -80,8 +79,11 @@ class ReviewInfo:
             if n.is_passed_node:
                 steps.append(f"{n.group.name}(passed)")
                 continue
+            if n.node_type == ReviewNodeType.DING_TALK:
+                steps.append(f"钉钉审批")
+                continue
             steps.append(n.group.name)
-        return " -> ".join(steps)
+        return "None" if len(steps) == 0 else " -> ".join(steps)
 
     @property
     def current_node(self) -> ReviewNode:
@@ -773,18 +775,22 @@ class Audit(object):
             return result
         # 只有待审核状态数据才可以审核
         if audit_info.current_status == WorkflowStatus.WAITING:
+
             try:
-                auth_group_id = Audit.detail_by_workflow_id(
+                audit = Audit.detail_by_workflow_id(
                     workflow_id, workflow_type
-                ).current_audit
-                audit_auth_group = Group.objects.get(id=auth_group_id).name
+                )
+                workflow = audit.get_workflow()
+                audit_auth_group = ''
+                if not workflow.channel_audit_instance_id:
+                    audit_auth_group = Group.objects.get(id=audit.current_audit).name
             except Exception:
                 raise Exception("当前审批auth_group_id不存在，请检查并清洗历史数据")
             if (
                     user.is_superuser
-                    or auth_group_users([audit_auth_group], group_id)
+                    or (workflow.channel_audit_instance_id or auth_group_users([audit_auth_group], group_id)
                     .filter(id=user.id)
-                    .exists()
+                    .exists())
             ):
                 if workflow_type == 1:
                     if user.has_perm("sql.query_review"):
@@ -826,6 +832,7 @@ class Audit(object):
 
 class DingTalkAudit(AuditV2):
 
+    @property
     def review_info(self) -> (str, str):
         if self.audit.audit_auth_groups == "":
             audit_auth_group = "无需审批"
@@ -834,10 +841,47 @@ class DingTalkAudit(AuditV2):
             audit_auth_group = "钉钉审批"
         return audit_auth_group, None
 
-    def operate(
-            self, action: WorkflowAction, actor: Users, remark: str
-    ) -> WorkflowAuditDetail:
+    def operate_pass(self, actor: Users, remark: str) -> WorkflowAuditDetail:
+        # todo 获取审批流信息， 根据审批链路判断当前用户是否有权限， 而后进行操作。 如果调用第三方失败， 则直接走本地的审批流
         raise AuditException("当前类型不支持该操作, 请至钉钉进行审批")
+
+    def operate_reject(self, actor: Users, remark: str) -> WorkflowAuditDetail:
+        # 关闭钉钉审批流 , 所有状态和日志会在事件中体现, 无需在这里处理
+        workflow_audit_detail = WorkflowAuditDetail.objects.create(
+            audit_id=self.audit.audit_id,
+            audit_user=actor.username,
+            audit_time=timezone.now(),
+            audit_status=WorkflowStatus.REJECTED,
+            remark=remark,
+        )
+        try:
+            close_process_instance(self.audit.current_audit, actor.ding_user_id, remark)
+            # 因为事件是异步的,所以先返回一个数据出去
+            return workflow_audit_detail
+        except Exception as e:
+            # 删除已存的数据， 走保底的本地流
+            workflow_audit_detail.delete()
+            logger.warning(f'调用钉钉失败,手动终止任务:{self.audit.workflow_id}')
+            return AuditV2.operate_reject(self, actor, remark)
+
+    def operate_abort(self, actor: Users, remark: str) -> WorkflowAuditDetail:
+        # 关闭钉钉审批流 , 所有状态和日志会在事件中体现, 无需在这里处理
+        workflow_audit_detail = WorkflowAuditDetail.objects.create(
+            audit_id=self.audit.audit_id,
+            audit_user=actor.username,
+            audit_time=timezone.now(),
+            audit_status=WorkflowStatus.ABORTED,
+            remark=remark,
+        )
+        try:
+            close_process_instance(self.audit.current_audit, actor.ding_user_id, remark)
+            # 因为事件是异步的,所以先返回一个数据出去
+            return workflow_audit_detail
+        except Exception as e:
+            # 删除已存的数据， 走保底的本地流
+            workflow_audit_detail.delete()
+            logger.warning(f'调用钉钉失败,手动终止任务:{self.audit.workflow_id}')
+            return AuditV2.operate_abort(self, actor, remark)
 
     def create_audit(self) -> str:
         """按照传进来的工作流创建审批流, 返回一个 message如果有任何错误, 会以 exception 的形式抛出, 其他情况都是正常进行"""
@@ -870,7 +914,7 @@ class DingTalkAudit(AuditV2):
             raise AuditException(f"不支持的审核类型: {self.workflow_type.label}")
         # 单独配置审批流程组, 三种类型都使用到了该字段, 且为一致数据
         # 这里直接使用 audit_setting 中适配的资源
-        self.workflow.channel_audit_instance_id=audit_setting.audit_auth_group_in_db
+        self.workflow.channel_audit_instance_id = audit_setting.audit_auth_group_in_db
         self.workflow.save()
         self.audit = WorkflowAudit(
             group_id=group_id,
@@ -928,16 +972,28 @@ class DingTalkAudit(AuditV2):
             workflow_audit_setting = WorkflowAuditSetting.objects.get(
                 workflow_type=self.workflow_type, group_id=group_id
             )
+            if self.workflow_type == WorkflowType.ARCHIVE:
+                self.workflow.group_id = group_id
+                self.workflow.group_name = workflow_audit_setting.group_name
         except WorkflowAuditSetting.DoesNotExist:
             raise AuditException(f"审批类型 {self.workflow_type.label} 未配置审流")
         # 创建审批流
-        process_instance_id = create_process(workflow_audit_setting.channel_process_code, self.workflow)
+        process_instance_id = create_process(workflow_audit_setting.channel_process_code, self.workflow_type,
+                                             self.workflow)
 
         return AuditSetting(
             auto_pass=self.is_auto_review(),
             auto_reject=self.is_auto_reject(),
             channel=WorkflowChannelType.DING_TALK,
             channel_process_instance_id=process_instance_id,
+        )
+
+    def get_review_info(self) -> ReviewInfo:
+        if not self.workflow.channel_audit_instance_id:
+            return AuditV2.get_review_info(self)
+        return ReviewInfo(
+            current_node_index=1,
+            nodes=[ReviewNode(node_type=ReviewNodeType.DING_TALK)]
         )
 
 

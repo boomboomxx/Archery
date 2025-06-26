@@ -255,7 +255,7 @@ def passed(request):
             )
         except AuditException as e:
             return render(
-                request, "error.html", {"errMsg": f"审核失败, 错误信息: {str(e)}"}
+                request, "error.html", {"errMsg": f"审核失败: {str(e)}"}
             )
         if auditor.audit.current_status == WorkflowStatus.PASSED:
             # 审批流全部走完了, 把工单标记为审核通过

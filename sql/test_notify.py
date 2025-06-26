@@ -1,12 +1,13 @@
 import json
+import os
 from datetime import datetime, timedelta, date
 from unittest.mock import patch, Mock, ANY
-import pytest
-from pytest_mock import MockFixture
 
-from django.contrib.auth.models import Group
+import pytest
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.contrib.auth.models import Group
+from django.test import TestCase, modify_settings
+from pytest_mock import MockFixture
 
 from common.config import SysConfig
 from sql.models import (
@@ -42,12 +43,15 @@ from sql.notify import (
 User = get_user_model()
 
 
+@modify_settings(DATABASES={'remove': ['TEST']})
 class TestNotify(TestCase):
     """
     测试消息
     """
 
     def setUp(self):
+        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "archery.settings")
+
         self.sys_config = SysConfig()
         self.aug = Group.objects.create(id=1, name="auth_group")
         self.user = User.objects.create(
@@ -78,6 +82,7 @@ class TestNotify(TestCase):
             engineer=self.user.username,
             engineer_display=self.user.display,
             audit_auth_groups="some_audit_group",
+            channel_audit_instance_id='ding_talk_instance_id',
             create_time=datetime.now(),
             status="workflow_timingtask",
             is_backup=True,
@@ -95,6 +100,7 @@ class TestNotify(TestCase):
             user_name="some_user",
             instance=self.ins,
             db_list="some_db,some_db2",
+            channel_audit_instance_id='ding_talk_instance_id',
             limit_num=100,
             valid_date=tomorrow,
             priv_type=1,
@@ -111,17 +117,17 @@ class TestNotify(TestCase):
             workflow_type=2,
             workflow_title="申请标题",
             workflow_remark="申请备注",
-            audit_auth_groups="1",
-            current_audit="1",
-            next_audit="2",
-            current_status=0,
+            audit_auth_groups="channel_instance_id",
+            current_audit="channel_instance_id",
+            next_audit="-1",
+            current_status=3,
             create_user=self.user.username,
         )
         self.audit_wf_detail = WorkflowAuditDetail.objects.create(
             audit_id=self.audit_wf.audit_id,
             audit_user=self.user.display,
             audit_time=datetime.now(),
-            audit_status=1,
+            audit_status=3,
             remark="测试备注",
         )
         self.audit_query = WorkflowAudit.objects.create(
@@ -154,6 +160,7 @@ class TestNotify(TestCase):
             src_table_name="bar",
             dest_db_name="foo-dest",
             dest_table_name="bar-dest",
+            channel_audit_instance_id='ding_talk_instance_id',
             mode="purge",
             no_delete=False,
             status=0,
@@ -263,7 +270,8 @@ class TestNotify(TestCase):
     # 下面的测试均为 notifier 的测试, 测试 render 和 send
     def test_legacy_render_execution(self):
         notifier = LegacyRender(
-            workflow=self.wf, event_type=EventType.EXECUTE, sys_config=self.sys_config
+            workflow=self.wf, event_type=EventType.AUDIT, sys_config=self.sys_config,
+            audit=self.audit_wf, audit_detail=self.audit_wf_detail,
         )
         notifier.render()
         self.assertEqual(len(notifier.messages), 1)
@@ -490,7 +498,7 @@ class TestNotify(TestCase):
             notifier.request_data["workflow_content"]["title"], self.query_apply_1.title
         )
 
-
+@modify_settings(DATABASES={'remove': ['TEST']})
 @pytest.mark.parametrize(
     "notifier_to_test,method_assert_called",
     [
@@ -504,10 +512,10 @@ class TestNotify(TestCase):
     ],
 )
 def test_notify_send(
-    mocker: MockFixture,
-    create_audit_workflow,
-    notifier_to_test: Notifier.__class__,
-    method_assert_called: str,
+        mocker: MockFixture,
+        create_audit_workflow,
+        notifier_to_test: Notifier.__class__,
+        method_assert_called: str,
 ):
     """测试通知发送
     初始化 notifier_to_test, 然后调用 send 方法, 然后断言对应的方法`method_assert_called`被调用了

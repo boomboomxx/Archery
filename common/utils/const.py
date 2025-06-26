@@ -38,6 +38,7 @@ class WorkflowAction(models.IntegerChoices):
     EXECUTE_SET_TIME = 4, "设置定时执行"
     EXECUTE_START = 5, "开始执行"
     EXECUTE_END = 6, "执行结束"
+    COMMENT = 7, "评论"
 
 
 class SQLTuning:

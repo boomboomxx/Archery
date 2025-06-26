@@ -54,6 +54,10 @@
 ===============
 [部署说明](https://github.com/hhyo/archery/wiki/manual)
 
+钉钉审批流启用
+===============
+[查看文档](docs/DingTalk.md)
+
 运行测试
 ===============
 ```

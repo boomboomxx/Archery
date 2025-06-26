@@ -29,7 +29,8 @@
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
-                        <input type="text" autocomplete="off" class="form-control" id="title" placeholder="简单说明权限用途">
+                        <input type="text" autocomplete="off" class="form-control" id="title"
+                               placeholder="简单说明权限用途">
                     </div>
                     <div class="form-group">
                         <select id="group_name" name="group_name"
@@ -49,7 +50,7 @@
                             // TODO 使用models中的choices 渲染
                             {% for name, engine in engines.items %}
                                 <optgroup id="optgroup-{{ name }}" label="{{ engine.name }}"></optgroup>
-                            {%  endfor %}
+                            {% endfor %}
                         </select>
                     </div>
                     <div class="form-group">
@@ -153,7 +154,7 @@
                     if (data.status === 0) {
                         $("optgroup[id^='optgroup']").empty();
                         let result = data['data']
-                        const supportDb = [ {% for name in engines.keys %}"{{ name }}", {% endfor %}]
+                        const supportDb = [{% for name in engines.keys %}"{{ name }}", {% endfor %}]
                         for (let i of result) {
                             let instance = "<option value=\"" + i.instance_name + "\" instance-id=" + i.id + ">" + i.instance_name + "</option>";
                             if (supportDb.indexOf(i.db_type) !== -1) {
@@ -183,8 +184,16 @@
                     if (data.status === 0) {
                         var result = data.data;
                         $("#div-workflow_auditors").show();
-                        $("#workflow_auditors").val(result['auditors']);
-                        $("#workflow_auditors").text(result['auditors_display']);
+
+                        channel = result['channel']
+                        if (channel === 0) {
+                            $("#workflow_auditors").val(result['auditors']).text(result['auditors_display']);
+                        } else if (channel === 1) {
+                            $("#workflow_auditors").val('钉钉审批: ' + result['channel_process_code_display'])
+                                .text('钉钉审批: ' + result['channel_process_code_display']);
+                        }
+
+
                     } else {
                         alert(data.msg);
                     }

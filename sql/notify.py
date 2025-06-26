@@ -26,7 +26,7 @@ from sql.models import (
     SqlWorkflowContent,
 )
 from sql.utils.resource_group import auth_group_users
-from sql.utils.workflow_audit import Audit, AuditV2
+from sql.utils.workflow_audit import Audit, AuditV2, get_auditor
 from sql_api.serializers import (
     WorkflowContentSerializer,
     WorkflowAuditListSerializer,
@@ -156,7 +156,7 @@ class LegacyRender(Notifier):
         workflow_from = self.audit.create_user_display
         group_name = self.audit.group_name
         # 获取当前审批和审批流程
-        audit_handler = AuditV2(workflow=self.workflow, audit=self.audit)
+        audit_handler = get_auditor(workflow=self.workflow, audit=self.audit)
         review_info = audit_handler.get_review_info()
         # workflow content, 即申请通过后要执行什么东西
         # 执行的 SQL 语句, 授权的范围
@@ -196,12 +196,19 @@ class LegacyRender(Notifier):
             )
         else:
             raise Exception("工单类型不正确")
+        channel_audit_instance_id = self.audit.get_workflow().channel_audit_instance_id
         # 渲染提醒内容, 包括工单的所有信息, 申请人, 审批流等
         if status == WorkflowStatus.WAITING:  # 申请阶段
             msg_title = "[{}]新的工单申请#{}".format(workflow_type_display, audit_id)
             # 接收人，发送给该资源组内对应权限组所有的用户
-            auth_group_names = Group.objects.get(id=self.audit.current_audit).name
-            msg_to = auth_group_users([auth_group_names], self.audit.group_id)
+            if channel_audit_instance_id:
+                msg_to = []
+            else:
+                auth_group_names = [
+                    Group.objects.get(id=auth_group_id).name
+                    for auth_group_id in self.audit.audit_auth_groups.split(",")
+                ]
+                msg_to = auth_group_users(auth_group_names, self.audit.group_id)
             # 消息内容
             msg_content = """发起时间：{}
 发起人：{}
@@ -219,7 +226,7 @@ class LegacyRender(Notifier):
                 instance,
                 db_name,
                 review_info.readable_info,
-                review_info.current_node.group.name,
+                "第三方渠道审批" if channel_audit_instance_id else review_info.current_node.group.name,
                 workflow_title,
                 workflow_url,
                 workflow_content,
@@ -258,11 +265,14 @@ class LegacyRender(Notifier):
                 workflow_type_display, audit_id
             )
             # 接收人，发送给该资源组内对应权限组所有的用户
-            auth_group_names = [
-                Group.objects.get(id=auth_group_id).name
-                for auth_group_id in self.audit.audit_auth_groups.split(",")
-            ]
-            msg_to = auth_group_users(auth_group_names, self.audit.group_id)
+            if self.audit.get_workflow().channel_audit_instance_id:
+                msg_to = []
+            else:
+                auth_group_names = [
+                    Group.objects.get(id=auth_group_id).name
+                    for auth_group_id in self.audit.audit_auth_groups.split(",")
+                ]
+                msg_to = auth_group_users(auth_group_names, self.audit.group_id)
             # 消息内容
             msg_content = """发起时间：{}\n发起人：{}\n组：{}\n目标实例：{}\n数据库：{}\n工单名称：{}\n工单地址：{}\n终止原因：{}""".format(
                 workflow_detail.create_time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -283,7 +293,7 @@ class LegacyRender(Notifier):
         base_url = self.sys_config.get(
             "archery_base_url", "http://127.0.0.1:8000"
         ).rstrip("/")
-        audit_handler = AuditV2(workflow=self.workflow, audit=self.audit)
+        audit_handler = get_auditor(workflow=self.workflow, audit=self.audit)
         review_info = audit_handler.get_review_info()
         audit_id = Audit.detail_by_workflow_id(self.workflow.id, 2).audit_id
         url = "{base_url}/workflow/{audit_id}".format(
@@ -315,8 +325,8 @@ class LegacyRender(Notifier):
         self.messages.append(LegacyMessage(msg_title, msg_content, msg_to, msg_cc))
         # DDL通知
         if (
-            self.sys_config.get("ddl_notify_auth_group")
-            and self.workflow.status == "workflow_finish"
+                self.sys_config.get("ddl_notify_auth_group")
+                and self.workflow.status == "workflow_finish"
         ):
             # 判断上线语句是否存在DDL，存在则通知相关人员
             if self.workflow.syntax_type == 1:
@@ -367,14 +377,14 @@ class DingdingWebhookNotifier(LegacyRender):
     sys_config_key: str = "ding"
 
     def send(self):
-        dingding_webhook = ResourceGroup.objects.get(
-            group_id=self.audit.group_id
-        ).ding_webhook
+        resource = ResourceGroup.objects.get(group_id=self.audit.group_id)
+        dingding_webhook = resource.ding_webhook
+        ding_webhook_sec = resource.ding_webhook_sec
         if not dingding_webhook:
             return
         msg_sender = MsgSender()
         for m in self.messages:
-            msg_sender.send_ding(dingding_webhook, f"{m.msg_title}\n{m.msg_content}")
+            msg_sender.send_ding(dingding_webhook, f"{m.msg_title}\n{m.msg_content}", ding_webhook_sec)
 
 
 class DingdingPersonNotifier(LegacyRender):
@@ -475,13 +485,13 @@ class MailNotifier(LegacyRender):
 
 
 def auto_notify(
-    sys_config: SysConfig,
-    workflow: Union[
-        SqlWorkflow, ArchiveConfig, QueryPrivilegesApply, My2SqlResult
-    ] = None,
-    audit: WorkflowAudit = None,
-    audit_detail: WorkflowAuditDetail = None,
-    event_type: EventType = EventType.AUDIT,
+        sys_config: SysConfig,
+        workflow: Union[
+            SqlWorkflow, ArchiveConfig, QueryPrivilegesApply, My2SqlResult
+        ] = None,
+        audit: WorkflowAudit = None,
+        audit_detail: WorkflowAuditDetail = None,
+        event_type: EventType = EventType.AUDIT,
 ):
     """
     加载所有的 notifier, 调用 notifier 的 render 和 send 方法
@@ -515,7 +525,7 @@ def notify_for_execute(workflow: SqlWorkflow, sys_config: SysConfig = None):
 
 
 def notify_for_audit(
-    workflow_audit: WorkflowAudit, workflow_audit_detail: WorkflowAuditDetail = None
+        workflow_audit: WorkflowAudit, workflow_audit_detail: WorkflowAuditDetail = None
 ):
     """
     工作流消息通知适配器, 供 async_task 调用, 方便后续的 mock

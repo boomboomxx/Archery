@@ -30,9 +30,9 @@ from .models import (
     QueryLog,
     ArchiveConfig,
     AuditEntry,
-    TwoFactorAuthConfig,
+    TwoFactorAuthConfig, WorkflowAudit,
 )
-from sql.utils.workflow_audit import Audit, AuditV2, AuditException
+from sql.utils.workflow_audit import Audit, AuditV2, AuditException, get_auditor
 from sql.utils.sql_review import (
     can_execute,
     can_timingtask,
@@ -173,7 +173,7 @@ def submit_sql(request):
     InstanceTag.objects.get_or_create(
         tag_code="can_write", defaults={"tag_name": "支持上线", "active": True}
     )
-    is_dingtalk = settings.CURRENT_AUDITOR == 'sql.utils.workflow_audit:DingTalkAudit'
+    is_dingtalk = settings.IS_DING_TALK_AUDITOR
     channel = WorkflowChannelType.DING_TALK if is_dingtalk else WorkflowChannelType.DEFAULT
     context = {
         "channel": channel,
@@ -187,7 +187,7 @@ def submit_sql(request):
 def detail(request, workflow_id):
     """展示SQL工单详细页面"""
     workflow_detail = get_object_or_404(SqlWorkflow, pk=workflow_id)
-    audit_handler = AuditV2(workflow=workflow_detail)
+    audit_handler = get_auditor(workflow=workflow_detail)
     if not can_view(request.user, workflow_id):
         raise PermissionDenied
     review_info = audit_handler.get_review_info()
@@ -358,7 +358,7 @@ def queryapplydetail(request, apply_id):
     """查询权限申请详情页面"""
     workflow_detail = QueryPrivilegesApply.objects.get(apply_id=apply_id)
     # 获取当前审批和审批流程
-    audit_handler = AuditV2(workflow=workflow_detail)
+    audit_handler = get_auditor(workflow=workflow_detail)
     review_info = audit_handler.get_review_info()
 
     # 是否可审核
@@ -491,9 +491,8 @@ def archive_detail(request, id):
     """归档详情页面"""
     archive_config = ArchiveConfig.objects.get(pk=id)
     # 获取当前审批和审批流程、是否可审核
-    audit_handler = AuditV2(
-        workflow=archive_config, resource_group=archive_config.resource_group
-    )
+    audit_handler = get_auditor(workflow=archive_config,
+                                resource_group=archive_config.resource_group)
     review_info = audit_handler.get_review_info()
     try:
         audit_handler.can_operate(WorkflowAction.PASS, request.user)
@@ -560,7 +559,7 @@ def config(request):
         sys_config["default_query_template"] = (
             "你是一个熟悉 {{db_type}} 的工程师, 我会给你一些基本信息和要求, 你会生成一个查询语句给我使用, 不要返回任何注释和序号, 仅返回查询语句：{{table_schema}} \n {{user_input}}"
         )
-    is_dingtalk = settings.CURRENT_AUDITOR == 'sql.utils.workflow_audit:DingTalkAudit'
+    is_dingtalk = settings.IS_DING_TALK_AUDITOR
     channel = WorkflowChannelType.DING_TALK if is_dingtalk else WorkflowChannelType.DEFAULT
     process_code_list = []
     if is_dingtalk:

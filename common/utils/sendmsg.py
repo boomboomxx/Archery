@@ -1,19 +1,20 @@
 # -*- coding: UTF-8 -*-
-
-import re
+import base64
 import email
+import hashlib
+import hmac
+import re
 import smtplib
-import requests
-import logging
+import time
 import traceback
+import urllib
 from email import encoders
 from email.header import Header
 from email.utils import formataddr
 
-from common.config import SysConfig
 from common.utils.ding_api import get_access_token
-from common.utils.wx_api import get_wx_access_token
 from common.utils.feishu_api import *
+from common.utils.wx_api import get_wx_access_token
 
 logger = logging.getLogger("default")
 
@@ -136,13 +137,22 @@ class MsgSender(object):
             return errmsg
 
     @staticmethod
-    def send_ding(url, content):
+    def send_ding(url, content, secret):
         """
         发送钉钉Webhook消息
-        :param url:
-        :param content:
+        :param url: 请求地址, 该请求地址包含 access_token, 后续拼接 secret 只需要使用
+        :param content: 内容
+        :param secret: 加签 SEC
         :return:
         """
+        if secret:
+            timestamp = str(round(time.time() * 1000))
+            secret_enc = secret.encode('utf-8')
+            string_to_sign = '{}\n{}'.format(timestamp, secret)
+            string_to_sign_enc = string_to_sign.encode('utf-8')
+            hmac_code = hmac.new(secret_enc, string_to_sign_enc, digestmod=hashlib.sha256).digest()
+            sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+            url = f'{url}&timestamp={timestamp}&sign={sign}&secret={secret}'
         data = {
             "msgtype": "text",
             "text": {"content": "{}".format(content)},
@@ -243,9 +253,9 @@ class MsgSender(object):
         r = requests.post(url=url, json=data)
         r_json = r.json()
         if (
-            "ok" in r_json
-            or ("StatusCode" in r_json and r_json["StatusCode"] == 0)
-            or ("code" in r_json and r_json["code"] == 0)
+                "ok" in r_json
+                or ("StatusCode" in r_json and r_json["StatusCode"] == 0)
+                or ("code" in r_json and r_json["code"] == 0)
         ):
             logger.debug(f"飞书Webhook推送成功\n通知对象：{url}\n消息内容：{content}")
         else:

@@ -8,6 +8,7 @@ from django.contrib.auth.models import Group
 from django.db.models import F, Value, IntegerField
 from django.http import HttpResponse
 
+from archery import settings
 from common.utils.ding_api import get_process_code_name
 from common.utils.extend_json_encoder import ExtendJSONEncoder
 from common.utils.permission import superuser_required
@@ -215,12 +216,12 @@ def auditors(request):
         result["status"] = 1
         result["msg"] = "参数错误"
         return HttpResponse(json.dumps(result), content_type="application/json")
-
-    if channel:
-        result["data"]["channel"] = channel
-    if channel_process_code:
-        result["data"]["channel_process_code"] = channel_process_code
-        result["data"]["channel_process_code_display"] = get_process_code_name(channel_process_code,request.user.username)
+    if settings.IS_DING_TALK_AUDITOR:
+        if channel:
+            result["data"]["channel"] = channel
+        if channel_process_code:
+            result["data"]["channel_process_code"] = channel_process_code
+            result["data"]["channel_process_code_display"] = get_process_code_name(channel_process_code,request.user.username)
 
 
     # 获取权限组名称

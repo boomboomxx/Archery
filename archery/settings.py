@@ -230,7 +230,7 @@ DATABASES = {
                 "charset": "utf8mb4",
             },
             "TEST": {
-                "NAME": "test_archery",
+                "NAME": "archery_test",
                 "CHARSET": "utf8mb4",
             },
         },
@@ -517,7 +517,9 @@ PKEY_ROOT = os.path.join(MEDIA_ROOT, "keys")
 if not os.path.exists(PKEY_ROOT):
     os.mkdir(PKEY_ROOT)
 
+IS_DING_TALK_AUDITOR = False
 if CURRENT_AUDITOR == 'sql.utils.workflow_audit:DingTalkAudit':
+    IS_DING_TALK_AUDITOR = True
     AUTH_DINGDING_APP_KEY = env("AUTH_DINGDING_APP_KEY")
     AUTH_DINGDING_APP_SECRET = env("AUTH_DINGDING_APP_SECRET")
 
