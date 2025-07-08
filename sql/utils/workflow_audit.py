@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from common.config import SysConfig
 from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction, WorkflowChannelType
-from common.utils.ding_api import create_process, close_process_instance
+from common.utils.ding_api import create_process, close_process_instance, get_process_instance_detail
 from sql.engines.models import ReviewResult
 from sql.models import (
     WorkflowAudit,
@@ -42,6 +42,13 @@ class ReviewNodeType(Enum):
     AUTO_PASS = "auto_pass"
 
 
+class ReviewType(Enum):
+    DEFAULT = "default"
+    DING_TALK = "ding_talk"
+    WE_CHAT = "we_chat"
+    FEI_SHU = "fei_shu"
+
+
 @dataclass
 class ReviewNode:
     group: Optional[Group] = None
@@ -63,6 +70,7 @@ class ReviewNode:
 @dataclass
 class ReviewInfo:
     nodes: List[ReviewNode] = field(default_factory=list)
+    review_type: ReviewType = ReviewType.DEFAULT
     current_node_index: int = None
 
     @property
@@ -71,18 +79,21 @@ class ReviewInfo:
         一般用途是渲染消息
         """
         steps = []
-        for index, n in enumerate(self.nodes):
-            if n.is_current_node:
-                self.current_node_index = index
-                steps.append(f"{n.group.name}(current)")
-                continue
-            if n.is_passed_node:
-                steps.append(f"{n.group.name}(passed)")
-                continue
-            if n.node_type == ReviewNodeType.DING_TALK:
-                steps.append(f"钉钉审批")
-                continue
-            steps.append(n.group.name)
+        if self.review_type == ReviewType.DEFAULT:
+            for index, n in enumerate(self.nodes):
+                if n.is_current_node:
+                    self.current_node_index = index
+                    steps.append(f"{n.group.name}(current)")
+                    continue
+                if n.is_passed_node:
+                    steps.append(f"{n.group.name}(passed)")
+                    continue
+                if n.node_type == ReviewNodeType.DING_TALK:
+                    steps.append(f"钉钉审批")
+                    continue
+                steps.append(n.group.name)
+        else:
+            pass
         return "None" if len(steps) == 0 else " -> ".join(steps)
 
     @property
@@ -914,7 +925,7 @@ class DingTalkAudit(AuditV2):
             raise AuditException(f"不支持的审核类型: {self.workflow_type.label}")
         # 单独配置审批流程组, 三种类型都使用到了该字段, 且为一致数据
         # 这里直接使用 audit_setting 中适配的资源
-        self.workflow.channel_audit_instance_id = audit_setting.audit_auth_group_in_db
+        self.workflow.channel_audit_instance_id = audit_setting.channel_process_instance_id
         self.workflow.save()
         self.audit = WorkflowAudit(
             group_id=group_id,
@@ -922,7 +933,7 @@ class DingTalkAudit(AuditV2):
             workflow_id=self.workflow.pk,
             workflow_type=self.workflow_type,
             workflow_title=workflow_title,
-            audit_auth_groups=audit_setting.audit_auth_group_in_db,
+            audit_auth_groups=audit_setting.channel_process_instance_id,
             current_audit="-1",
             next_audit="-1",
             create_user=create_user,
@@ -944,7 +955,7 @@ class DingTalkAudit(AuditV2):
             return "无需审批, 直接审核通过"
 
         # 向审核主表插入待审核数据
-        self.audit.current_audit = audit_setting.audit_auth_group_in_db
+        self.audit.current_audit = audit_setting.channel_process_instance_id
         self.audit.next_audit = "-1"
         self.audit.current_status = WorkflowStatus.WAITING
         self.audit.create_user = create_user
@@ -989,10 +1000,11 @@ class DingTalkAudit(AuditV2):
         )
 
     def get_review_info(self) -> ReviewInfo:
-        if not self.workflow.channel_audit_instance_id:
+        if not self.workflow.channel_audit_instance_id and self.workflow.audit_auth_groups:
             return AuditV2.get_review_info(self)
         return ReviewInfo(
             current_node_index=1,
+            review_type=ReviewType.DING_TALK,
             nodes=[ReviewNode(node_type=ReviewNodeType.DING_TALK)]
         )
 

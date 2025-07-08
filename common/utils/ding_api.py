@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import json
 import logging
 import pickle
 import re
@@ -8,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import dingtalk_stream
+import prettytable
 import requests
 from asgiref.sync import sync_to_async
 from django.core.cache import cache
@@ -20,7 +22,7 @@ from archery.settings import env
 from common.config import SysConfig
 from common.utils.const import WorkflowAction, WorkflowStatus, WorkflowType
 from common.utils.permission import superuser_required
-from sql.models import Users, WorkflowAudit, WorkflowLog, WorkflowAuditDetail
+from sql.models import Users, WorkflowAudit, WorkflowLog, WorkflowAuditDetail, SqlWorkflowContent
 from sql.utils.tasks import add_sync_ding_user_schedule, del_schedule, add_sql_schedule
 
 logger = logging.getLogger("default")
@@ -407,6 +409,18 @@ def build_process_instance_data(process_code, workflow, workflow_type):
         workflow_title = workflow.workflow_name
         create_user = workflow.engineer
         run_date_str = '-'
+        workflow_content = SqlWorkflowContent.objects.get(workflow=workflow)
+        review_content = json.loads(workflow_content.review_content)
+        tab = prettytable.PrettyTable()
+        tab.field_names = ['ID', '审核/执行状态', '审核/执行信息', '当前阶段']
+        for ct in review_content:
+            err_level = 'pass'
+            if ct['errlevel'] == 1:
+                err_level = 'warning'
+            elif ct['errlevel'] == 2:
+                err_level = 'error'
+            tab.add_row([ct['id'], err_level, ct['errormessage'], ct['stagestatus']])
+
         if workflow.run_date_start and workflow.run_date_end:
             run_date_str = workflow.run_date_start.strftime('%Y-%m-%d %H:%M:%S') + '-' + workflow.run_date_end.strftime(
                 '%Y-%m-%d %H:%M:%S')
@@ -431,6 +445,10 @@ def build_process_instance_data(process_code, workflow, workflow_type):
 数据库: {workflow.db_name}
 可执行时间范围: {run_date_str}
 ----------
+
+审核信息 
+----------
+{tab.get_string()}
 
 '''
             }
@@ -529,6 +547,33 @@ def get_all_visiable_bpms_process(username):
     return datas
 
 
+def get_process_instance_detail(process_instance_id):
+    try:
+        detail = cache.get(f"ding_process_instance_detail:{process_instance_id}")
+        if detail:
+            return pickle.loads(detail)
+    except Exception as e:
+        logger.warning(f"无法获取缓存数据，调用 API 获取数据")
+    try:
+        token = get_access_token_by_env()
+        url = f'https://oapi.dingtalk.com/topapi/processinstance/get?access_token={token}'
+        body = {'process_instance_id': process_instance_id}
+        response = requests.post(url, json=body).json()
+        if not response.get("errcode") == 0:
+            raise DingAPIException(f"{response.get('errmsg', '')}")
+        result = response.get("process_instance")
+        if result['status'] in ['COMPLETED', 'TERMINATED', 'CANCELED']:
+            # 已经完成/终止的流程, 不会有变动, 放入缓存减少请求次数
+            cache.set(f"ding_process_instance_detail:{process_instance_id}", pickle.dumps(result))
+        return result
+
+    except Exception as e:
+        if isinstance(e, DingAPIException):
+            raise e
+        logger.error(f"获取审批详情失败: {e}")
+        raise Exception(f"获取审批详情失败, 请联系管理员")
+
+
 def get_process_code_name(process_code, username) -> Optional[str]:
     name = cache.get(f'ding_bpms:code:{process_code}')
     if not name:
@@ -586,8 +631,7 @@ class ArcheryDingtalkEventHandler(dingtalk_stream.EventHandler):
 
             elif _data.type == 'terminate':
                 # 记录明细
-                audit_detail = await self.get_audit_detail_with_status(audit_id=audit.audit_id,
-                                                                       audit_status=audit.current_status)
+                audit_detail = await self.get_audit_detail_with_status(audit_id=audit.audit_id)
                 if not audit_detail:
                     audit_detail = WorkflowAuditDetail(
                         audit_id=audit.audit_id,
@@ -671,8 +715,8 @@ class ArcheryDingtalkEventHandler(dingtalk_stream.EventHandler):
         return audit.first(), cur_user.first()
 
     @sync_to_async()
-    def get_audit_detail_with_status(self, audit_id, audit_status):
-        return WorkflowAuditDetail.objects.get(audit_id=audit_id, audit_status=audit_status)
+    def get_audit_detail_with_status(self, audit_id):
+        return WorkflowAuditDetail.objects.get(audit_id=audit_id)
 
     @sync_to_async
     def save_audit_log(self, audit_log: WorkflowAuditDetail):
