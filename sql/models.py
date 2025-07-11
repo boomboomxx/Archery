@@ -64,6 +64,7 @@ class Users(AbstractUser):
     """
 
     display = models.CharField("显示的中文名", max_length=50, default="")
+    mobile = models.CharField("手机号", max_length=50, default="", blank=True)
     ding_user_id = models.CharField("钉钉UserID", max_length=64, blank=True)
     wx_user_id = models.CharField("企业微信UserID", max_length=64, blank=True)
     feishu_open_id = models.CharField("飞书OpenID", max_length=64, blank=True)

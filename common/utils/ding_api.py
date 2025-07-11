@@ -152,6 +152,38 @@ def sync_ding_user_id():
     return True
 
 
+def sync_ding_user_id_by_mobile():
+    """
+    用于定时任务 使用 mobile同步 dingding_user_id
+
+    应用启动时自动创建定时任务
+
+    每天运行一次
+    :return:
+    """
+    token = get_access_token_by_env()
+    if not token:
+        return "未配置或错误的 APP_KEY & APP_SECRET"
+    users = Users.objects.filter(mobile__isnull=False)
+    if not users or len(users) == 0:
+        return "无可用手机号进行同步"
+    cnt = 0
+    for user in users:
+        try:
+            ding_id = get_ding_user_id_by_mobile(user.mobile)
+            user.ding_user_id = ding_id if ding_id else ''
+            logger.info(f"成功为用户 [{user.display}] 同步钉钉ID: [{ding_id}]")
+            cnt += 1
+        except Exception as e:
+            logger.error(f"获取用户 [{user.display}] 钉钉ID 失败, {e}")
+    # 批量更新, 减少db操作次数
+    batch_size = 1000
+    data_tobe_update = [users[i: i + batch_size] for i in range(0, len(users), batch_size)]
+    for data in data_tobe_update:
+        Users.objects.bulk_update(data, ["ding_user_id"])
+    return f"同步数量: {cnt}"
+
+
 def get_process_code_by_name(process_name) -> Optional[str]:
     """
     通过模板名称获取审批模版 code
@@ -900,6 +932,13 @@ class DingtalkProcessInstanceTaskChangeEvent(BaseModel):
     content: Optional[str] = None
     taskId: Optional[int] = None
 
+@superuser_required
+def trigger_sync_ding_user(request):
+    async_task(
+        sync_ding_user_id_by_mobile,
+        timeout=60,
+        task_name=f"sync-ding-user-by-mobile-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}",
+    )
 
 @superuser_required
 def sync_ding_user(request):

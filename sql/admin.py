@@ -1,10 +1,13 @@
 # -*- coding: UTF-8 -*-
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
-
 # Register your models here.
 from django.forms import PasswordInput
+from django.http import HttpResponseRedirect
+from django.urls import path
 
+from common.utils.ding_api import trigger_sync_ding_user
+from sql.form import TunnelForm, InstanceForm
 from .models import (
     Users,
     Instance,
@@ -30,8 +33,6 @@ from .models import (
     AuditEntry,
     TwoFactorAuthConfig,
 )
-
-from sql.form import TunnelForm, InstanceForm
 
 
 # 用户管理
@@ -60,6 +61,7 @@ class UsersAdmin(UserAdmin):
             {
                 "fields": (
                     "display",
+                    "mobile",
                     "email",
                     "ding_user_id",
                     "wx_user_id",
@@ -90,6 +92,7 @@ class UsersAdmin(UserAdmin):
             {
                 "fields": (
                     "display",
+                    "mobile",
                     "email",
                     "ding_user_id",
                     "wx_user_id",
@@ -113,6 +116,17 @@ class UsersAdmin(UserAdmin):
     )
     filter_horizontal = ("groups", "user_permissions", "resource_group")
     list_filter = ("is_staff", "is_superuser", "is_active", "groups", "resource_group")
+    change_list_template = 'ding_sync_change_list.html'
+
+    def get_urls(self):
+        urls = super().get_urls()
+        my_urls = [path('run_ding_sync_by_mobile/', self.admin_site.admin_view(self.run_ding_sync_by_mobile))]
+        return my_urls + urls
+
+    def run_ding_sync_by_mobile(self, request):
+        trigger_sync_ding_user(request)
+        messages.success(request, "运行成功")
+        return HttpResponseRedirect("../")
 
 
 # 用户2fa管理

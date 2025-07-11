@@ -49,6 +49,17 @@ def add_sync_ding_user_schedule():
         timeout=-1,
     )
 
+def add_sync_ding_user_by_mobile_schedule():
+    """添加钉钉手机号同步用户定时任务"""
+    del_schedule(name="手机号同步钉钉用户ID")
+    schedule(
+        "common.utils.ding_api.sync_ding_user_id_by_mobile",
+        name="手机号同步钉钉用户ID",
+        schedule_type=Schedule.DAILY,
+        repeats=-1,
+        timeout=-1,
+    )
+
 
 def del_schedule(name):
     """删除schedule"""

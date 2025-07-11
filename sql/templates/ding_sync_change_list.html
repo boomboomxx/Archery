@@ -1,0 +1,12 @@
+{% extends 'admin/change_list.html' %}
+
+{% if IS_DING_TALK_AUDITOR %}
+{% block object-tools %}
+    <form id="task-run-form" action="run_ding_sync_by_mobile/">
+        {% csrf_token %}
+        <button id="run-task" type="submit">运行钉钉同步任务</button>
+    </form>
+    <br/>
+    {{ block.super }}
+{% endblock %}
+{% endif %}

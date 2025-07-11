@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from common.config import SysConfig
 from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction, WorkflowChannelType
-from common.utils.ding_api import create_process, close_process_instance, get_process_instance_detail
+from common.utils.ding_api import create_process, close_process_instance
 from sql.engines.models import ReviewResult
 from sql.models import (
     WorkflowAudit,

@@ -1,5 +1,7 @@
 # 钉钉审批流程配置说明
 
+> 启用该流程， 会覆盖 DING_TO_PERSON 的机制，导致该功能不可用。<br>
+> 优先级为: `env` > settings > 页面配置
 ----
 ## 基础配置
 1. 创建钉钉企业内部应用 [参考文档](https://open.dingtalk.com/document/orgapp/application-types)
@@ -19,6 +21,23 @@
      * 多行文本组件, 名称一致 ![字段2](ding_workflow_form_field_2.png)
    * 流程配置自己自定义即可
 5. 在审批配置中选择对应的审批模板即可
+
+---
+## 本地账号&uid绑定
+### 触发机制
+同步任务会在应用启动时创建定时任务，每天执行一次
+
+如果需要手动触发， 可在管理员界面中， 点击“运行钉钉同步任务” 按钮即可触发一次同步。
+
+### LDAP 同步设置
+> 由于 DING_TO_PERSON 功能的配置只能使用 `user_name` 进行匹配，不是很准确, 所以给 `sql_user` 添加了 `mobile` 字段。 使用 `mobile` 字段获取用户uid和其他信息是比较准确的做法。<br/>
+> 针对其他平台的操作， 使用手机号获取其平台 uid 是相对用户名更合适的选择
+
+LDAP 需要配置手机号对应的参数 `mobile`, 以便同步任务可以使用手机号同步 `dingding_user_id`
+```pycon
+AUTH_LDAP_ALWAYS_UPDATE_USER=true
+AUTH_LDAP_USER_ATTR_MAP=username=cn,display=sn,email=email,mobile=mobile
+```
 
 ---
 ### 审批后如何执行
@@ -56,3 +75,4 @@
    * `/execute 1d20m20s` ==> `2025-01-02 12:20:20`
    * `/execute 1w20m20s` ==> `2025-01-08 12:20:20`
    * `/execute 1w2w3w`  ==> Unsupported
+
