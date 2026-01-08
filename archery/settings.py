@@ -20,7 +20,10 @@ environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, ["*"]),
-    SECRET_KEY=(str, "hfusaf2m4ot#7)fkw#di2bu6(cv0@opwmafx5n#6=3d%x^hpl6"),
+    SECRET_KEY=(
+        str,
+        "",
+    ),  # 参考 https://docs.djangoproject.com/zh-hans/4.0/ref/settings/#secret-key
     DATABASE_URL=(str, "mysql://root:@127.0.0.1:3306/archery"),
     CACHE_URL=(str, "redis://127.0.0.1:6379/0"),
     # 系统外部认证目前支持LDAP、OIDC、DINGDING三种，认证方式只能启用其中一种，如果启用多个，实际生效的只有一个，优先级LDAP > DINGDING > OIDC
@@ -34,6 +37,10 @@ env = environ.Env(
     AUTH_LDAP_USER_ATTR_MAP=(
         dict,
         {"username": "cn", "display": "displayname", "email": "mail"},
+    ),
+    OIDC_USER_ATTR_MAP=(
+        dict,
+        {"username": "preferred_username", "display": "name", "email": "email"},
     ),
     Q_CLUISTER_SYNC=(bool, False),  # qcluster 同步模式, debug 时可以调整为 True
     # CSRF_TRUSTED_ORIGINS=subdomain.example.com,subdomain.example2.com subdomain.example.com
@@ -55,6 +62,7 @@ env = environ.Env(
             "doris",
             "elasticsearch",
             "opensearch",
+            "memcached",
         ],
     ),
     ENABLED_NOTIFIERS=(
@@ -106,6 +114,7 @@ AVAILABLE_ENGINES = {
     "doris": {"path": "sql.engines.doris:DorisEngine"},
     "elasticsearch": {"path": "sql.engines.elasticsearch:ElasticsearchEngine"},
     "opensearch": {"path": "sql.engines.elasticsearch:OpenSearchEngine"},
+    "memcached": {"path": "sql.engines.memcached:MemcachedEngine"},
 }
 
 ENABLED_NOTIFIERS = env("ENABLED_NOTIFIERS")
@@ -304,6 +313,7 @@ SIMPLE_JWT = {
 ENABLE_OIDC = env("ENABLE_OIDC", False)
 if ENABLE_OIDC:
     INSTALLED_APPS += ("mozilla_django_oidc",)
+    OIDC_USER_ATTR_MAP = env("OIDC_USER_ATTR_MAP")
     AUTHENTICATION_BACKENDS = (
         "common.authenticate.oidc_auth.OIDCAuthenticationBackend",
         "django.contrib.auth.backends.ModelBackend",
